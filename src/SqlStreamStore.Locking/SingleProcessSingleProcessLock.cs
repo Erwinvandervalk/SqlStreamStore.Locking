@@ -32,7 +32,7 @@ namespace SqlStreamStore.Locking
             while (!_stopped.IsCancellationRequested)
             {
                 var ct = _stopped.Token;
-                await Task.Delay(Tick, ct);
+                await DelayBy(Tick, ct);
                 _elapsed = _elapsed.Add(Tick);
 
                 if (_elapsed > TimeoutAfter)
@@ -60,11 +60,11 @@ namespace SqlStreamStore.Locking
 
         private async Task StoreLockData(LockData cancelledLock, CancellationToken ct)
         {
-            await _lockStore.Store(cancelledLock, ct);
+            await _lockStore.Save(cancelledLock, ct);
             CurrentLockData = cancelledLock;
         }
 
-        public async Task ReportAliveAsync(string state, CancellationToken ct)
+        public async Task ReportAlive(string state, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
             var renewedLock = string.IsNullOrEmpty(state)
@@ -75,7 +75,7 @@ namespace SqlStreamStore.Locking
         }
         public Task Release(CancellationToken ct)
         {
-            _lockStore.Store(CurrentLockData.AfterAction(LockAction.Released), ct);
+            _lockStore.Save(CurrentLockData.AfterAction(LockAction.Released), ct);
             return Task.CompletedTask;
         }
         public CancellationToken InstallCancelled => _installationCancelledCts.Token;

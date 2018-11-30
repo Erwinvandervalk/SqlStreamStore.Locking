@@ -2,6 +2,7 @@
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using SqlStreamStore.Streams;
 using StreamStoreStore.Json;
 
@@ -26,8 +27,9 @@ namespace SqlStreamStore.Locking
             if (page.Messages.Length == 0)
                 return LockData.Unlocked();
 
-            var lastMessage = page.Messages.LastOrDefault();
-            return await lastMessage.GetJsonDataAs<LockData>(cancellationToken: ct);
+            var lastMessage = page.Messages.First();
+            var data = await lastMessage.GetJsonData(ct);
+            return JsonConvert.DeserializeObject<LockData>(data);
         }
 
         public async Task Save(LockData lockData, CancellationToken ct)
@@ -38,7 +40,7 @@ namespace SqlStreamStore.Locking
                 await _streamStore.SetStreamMetadata(_streamId, maxAge: 5, cancellationToken: ct);
             }
 
-            var newData = SimpleJson.SerializeObject(lockData);
+            var newData = JsonConvert.SerializeObject(lockData, Formatting.Indented);
 
             var result = await _streamStore.AppendToStream(
                 streamId: _streamId,

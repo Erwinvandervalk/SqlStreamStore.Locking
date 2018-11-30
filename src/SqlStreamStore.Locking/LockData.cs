@@ -22,7 +22,7 @@ namespace SqlStreamStore.Locking
             return new LockData(version, null, new List<HistoricData>());
         }
 
-        public bool CanAquireLock => History.Any() || (
+        public bool CanAquireLock => !History.Any() || (
                                    History.Last().Action == LockAction.None
                                    || History.Last().Action == LockAction.Released
                                    || History.Last().Action == LockAction.TimedOut

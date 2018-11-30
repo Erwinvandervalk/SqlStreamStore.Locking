@@ -6,7 +6,7 @@ namespace SqlStreamStore.Locking
 {
     public interface ISingleProcessLock : IDisposable
     {
-        Task ReportAliveAsync(CancellationToken ct);
+        Task ReportAlive(string state, CancellationToken ct);
         Task Release(CancellationToken ct);
         CancellationToken InstallCancelled { get; }
     }
