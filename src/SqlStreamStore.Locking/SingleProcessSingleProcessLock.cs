@@ -6,43 +6,84 @@ namespace SqlStreamStore.Locking
 {
     public class SingleProcessSingleProcessLock : ISingleProcessLock
     {
-        private readonly InstallationProgressManager _mgr;
-        private readonly CancellationTokenSource _cts;
-        private readonly ScheduleTask ScheduleTask;
-        private static readonly TimeSpan s_TimeSpan = TimeSpan.FromSeconds(10);
-        private IDisposable _scheduledTask;
+        private readonly ILockStore _lockStore;
+        internal readonly DelayBy DelayBy;
+        private readonly CancellationTokenSource _installationCancelledCts;
+        private static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan TimeoutAfter = TimeSpan.FromSeconds(20);
+        private CancellationTokenSource _stopped;
+        private Task<Task> _tickTask;
 
-        public SingleProcessSingleProcessLock(InstallationProgressManager mgr, LockData history, CancellationTokenSource cts, ScheduleTask scheduleTask)
+        private TimeSpan _elapsed;
+
+        public SingleProcessSingleProcessLock(ILockStore lockStore, LockData lockData, DelayBy delayBy, CancellationToken ct)
         {
-            _mgr = mgr;
-            _cts = cts;
-            ScheduleTask = scheduleTask;
-            _scheduledTask = ScheduleTask(s_TimeSpan, OnTime);
-            CurrentHistory = history;
+            _lockStore = lockStore;
+            DelayBy = delayBy;
+            _installationCancelledCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _elapsed = TimeSpan.Zero;
+            _tickTask = Task.Factory.StartNew(TickLoop, _stopped.Token, TaskCreationOptions.LongRunning, TaskScheduler.Current);
+            CurrentLockData = lockData;
         }
-        private async Task OnTime(CancellationToken ct)
+
+        private async Task TickLoop()
         {
-            _cts.Cancel();
+            while (!_stopped.IsCancellationRequested)
+            {
+                var ct = _stopped.Token;
+                await Task.Delay(Tick, ct);
+                _elapsed = _elapsed.Add(Tick);
+
+                if (_elapsed > TimeoutAfter)
+                {
+                    await TimeoutOccurred(ct);
+                    _stopped.Cancel();
+                }
+                else
+                {
+                    var cancelledLock = CurrentLockData.Renewed();
+                    await StoreLockData(cancelledLock, ct);
+                }
+            }
         }
-        public Task ReportAliveAsync(CancellationToken ct)
+
+        private async Task TimeoutOccurred(CancellationToken ct)
+        {
+            // Trigger the cancelled CTS, which should cancel any running task. 
+            _installationCancelledCts.Cancel();
+
+            // Store the cancellation in the db
+            var cancelledLock = CurrentLockData.AfterAction(LockAction.Cancelled);
+            await StoreLockData(cancelledLock, ct);
+        }
+
+        private async Task StoreLockData(LockData cancelledLock, CancellationToken ct)
+        {
+            await _lockStore.Store(cancelledLock, ct);
+            CurrentLockData = cancelledLock;
+        }
+
+        public async Task ReportAliveAsync(string state, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            _scheduledTask?.Dispose();
-            _scheduledTask = ScheduleTask(s_TimeSpan, OnTime);
-            return Task.CompletedTask;
+            var renewedLock = string.IsNullOrEmpty(state)
+                ? CurrentLockData.Renewed()
+                : CurrentLockData.WithProgress(state);
+
+            await StoreLockData(renewedLock, ct);
         }
         public Task Release(CancellationToken ct)
         {
-            _scheduledTask?.Dispose();
+            _lockStore.Store(CurrentLockData.AfterAction(LockAction.Released), ct);
             return Task.CompletedTask;
         }
-        public CancellationToken InstallCancelled => _cts.Token;
-        public LockData CurrentHistory { get; }
+        public CancellationToken InstallCancelled => _installationCancelledCts.Token;
+        public LockData CurrentLockData { get; private set; }
 
         public void Dispose()
         {
-            _cts.Dispose();
-            _scheduledTask?.Dispose();
+            _installationCancelledCts.Dispose();
         }
     }
 }

@@ -9,6 +9,5 @@ namespace SqlStreamStore.Locking
         Task ReportAliveAsync(CancellationToken ct);
         Task Release(CancellationToken ct);
         CancellationToken InstallCancelled { get; }
-        LockData CurrentHistory { get; }
     }
 }

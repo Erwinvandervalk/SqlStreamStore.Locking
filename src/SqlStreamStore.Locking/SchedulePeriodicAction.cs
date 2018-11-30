@@ -4,5 +4,5 @@ using System.Threading.Tasks;
 
 namespace SqlStreamStore.Locking
 {
-    public delegate IDisposable ScheduleTask(TimeSpan at, Func<CancellationToken, Task> action);
+    public delegate IDisposable SchedulePeriodicAction(TimeSpan at, Func<CancellationToken, Task> action);
 }

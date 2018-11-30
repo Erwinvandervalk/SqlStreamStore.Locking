@@ -7,12 +7,12 @@ using StreamStoreStore.Json;
 
 namespace SqlStreamStore.Locking
 {
-    public class InstallRepository : IInstallRepository
+    public class LockStore : ILockStore
     {
         private readonly IStreamStore _streamStore;
         private readonly string _streamId;
 
-        public InstallRepository(IStreamStore streamStore, string streamId)
+        public LockStore(IStreamStore streamStore, string streamId)
         {
             _streamStore = streamStore;
             _streamId = streamId;
@@ -24,13 +24,13 @@ namespace SqlStreamStore.Locking
                 cancellationToken: ct);
 
             if (page.Messages.Length == 0)
-                return new LockData();
+                return LockData.Unlocked();
 
             var lastMessage = page.Messages.LastOrDefault();
             return await lastMessage.GetJsonDataAs<LockData>(cancellationToken: ct);
         }
 
-        public async Task Remember(LockData currentHistory, CancellationToken ct, LockData.CompletedStep newlyCompletedStep = null)
+        public async Task Save(LockData lockData, CancellationToken ct)
         {
             var metaData = await _streamStore.GetStreamMetadata(_streamId, ct);
             if (metaData.MaxCount != 5)
@@ -38,23 +38,12 @@ namespace SqlStreamStore.Locking
                 await _streamStore.SetStreamMetadata(_streamId, maxAge: 5, cancellationToken: ct);
             }
 
-            var history = currentHistory.History.ToList();
-            if (newlyCompletedStep != null)
-            {
-                history.Append(newlyCompletedStep);
-            }
-
-            var newData = SimpleJson.SerializeObject(new LockData
-            {
-                History = history,
-                LastCompletedStep = newlyCompletedStep?.StepName ?? currentHistory.LastCompletedStep,
-                Version = currentHistory.Version + 1
-            });
+            var newData = SimpleJson.SerializeObject(lockData);
 
             var result = await _streamStore.AppendToStream(
                 streamId: _streamId,
-                expectedVersion: currentHistory.Version,
-                message: new NewStreamMessage(Guid.NewGuid(), "installhistory", newData, null),
+                expectedVersion: lockData.Version -1,
+                message: new NewStreamMessage(Guid.NewGuid(), "lockData", newData, null),
                 cancellationToken: ct);
         }
     }

@@ -12,8 +12,8 @@ namespace SqlStreamStore.Locking.Tests
         [Fact]
         public async Task Test1()
         {
-            var repo = new InstallRepository(new InMemoryStreamStore(), "msg");
-            var installer = new InstallationProgressManager(repo);
+            var repo = new LockStore(new InMemoryStreamStore(), "msg");
+            var installer = new Lockmanager(repo);
 
             var aquiredLock = await installer.AquireSingleProcessLock(ct);
 
