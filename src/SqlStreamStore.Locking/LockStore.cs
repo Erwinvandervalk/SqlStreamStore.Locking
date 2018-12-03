@@ -57,10 +57,10 @@ namespace SqlStreamStore.Locking
 
             var newData = JsonConvert.SerializeObject(lockData, Formatting.Indented);
 
-            var result = await _streamStore.AppendToStream(
+            await _streamStore.AppendToStream(
                 _streamId,
                 lockData.Version - 1,
-                new NewStreamMessage(Guid.NewGuid(), "lockData", newData, null),
+                new NewStreamMessage(Guid.NewGuid(), "lockData", newData),
                 ct);
         }
     }
