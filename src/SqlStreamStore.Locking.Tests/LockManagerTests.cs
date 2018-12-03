@@ -1,122 +1,158 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
+using Xunit.Sdk;
 
 namespace SqlStreamStore.Locking.Tests
 {
+
     public class LockManagerTests
     {
         private readonly CancellationToken ct = CancellationToken.None;
+        private readonly TestScheduler _scheduler = new TestScheduler();
+        private readonly LockStore _lockStore;
+        private readonly InMemoryStreamStore _inMemoryStreamStore = new InMemoryStreamStore();
+        private readonly LockManager _sut;
+
+        public LockManager.Options UsedOptions = LockManager.Options.Default;
+
+        public TimeSpan TimeAfterWhichTaskShouldTimeout => UsedOptions.TaskTimeout + TimeSpan.FromSeconds(5);
+        public TimeSpan TimeAfterWhichDbShouldTimeout => UsedOptions.DbTimeout + TimeSpan.FromSeconds(5);
+        public TimeSpan SafeTaskCheckingInterval => UsedOptions.RefreshInterval + TimeSpan.FromSeconds(1);
+
+        public LockManagerTests()
+        {
+            _lockStore = new LockStore(_inMemoryStreamStore, "msg");
+            _sut = LockManager.BuildLockManager(_lockStore, UsedOptions, _scheduler.ScheduleRecurring);
+        }
 
         [Fact]
         public async Task Can_aquire_lock_and_release_it()
         {
-            var delayer = new TestDelayer();
-            var repo = new LockStore(new InMemoryStreamStore(), "msg");
-            var installer = new LockManager(repo, delayer.SimulatedDelayBy);
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                await aquiredLock.Release(ct);
+                Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+            }
+        }
 
-            var aquiredLock = await installer.AquireSingleProcessLock(ct);
+        [Fact]
+        public async Task Can_take_over_lock_after_released()
+        {
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                await aquiredLock.ReportAlive("state1", CancellationToken.None);
+                await aquiredLock.Release(ct);
+            }
 
-            await aquiredLock.Release(ct);
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                Assert.Equal("state1", aquiredLock.CurrentLockData.State);
+                await aquiredLock.ReportAlive("state2", CancellationToken.None);
+                await aquiredLock.Release(ct);
+            }
+
+            var data = await _sut.GetCurrentState(CancellationToken.None);
+            Assert.Equal("state2", data.State);
+            Assert.Equal(new []{null, "state1", "state1", "state1", "state2", "state2" }, data.History.Select(x => x.State).ToArray());
+            Assert.Equal(new []{LockAction.Acquired, LockAction.Acquired, LockAction.Released, LockAction.Acquired, LockAction.Acquired, LockAction.Released }, data.History.Select(x => x.Action).ToArray());
         }
 
         [Fact]
         public async Task Will_cancel_task_when_needed()
         {
-            var delayer = new TestDelayer();
-            var repo = new LockStore(new InMemoryStreamStore(), "msg");
-            var installer = new LockManager(repo, delayer.SimulatedDelayBy);
             bool cancelled = false;
-            var aquiredLock = await installer.AquireSingleProcessLock(ct);
-
-            var job = Task.Run(async () =>
+            bool ranToCompletion = false;
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
             {
-                try
+                var job = Task.Run(async () =>
                 {
-                    while (true)
+                    try
                     {
-                        await Task.Delay(100, aquiredLock.InstallCancelled);
+                        // it should not really wait for 1000 seconds. but 1000 seconds should be enough for the
+                        // test to be killed. If not, then the 'ran to completion' will kill it. 
+                        await Task.Delay(TimeSpan.FromSeconds(1000), aquiredLock.InstallCancelled);
+                        ranToCompletion = true;
                     }
+                    catch (OperationCanceledException)
+                    {
+                        cancelled = true;
+                    }
+                });
 
-                }
-                catch (OperationCanceledException)
-                {
-                    cancelled = true;
-                }
-            });
+                await _scheduler.AdvanceTimeBy(TimeAfterWhichTaskShouldTimeout);
 
-
-            await delayer.AdvanceBy(TimeSpan.FromSeconds(60));
-            await Task.Delay(100);
-
-            await job;
-            Assert.True(cancelled);
+                await job;
+                Assert.True(cancelled);
+                Assert.False(ranToCompletion);
+            }
         }
-
 
         [Fact]
         public async Task Can_keep_task_alive()
         {
-            var delayer = new TestDelayer();
-            var repo = new LockStore(new InMemoryStreamStore(), "msg");
-            var installer = new LockManager(repo, delayer.SimulatedDelayBy);
-            bool cancelled = false;
-            bool completedNormally = false;
-            var aquiredLock = await installer.AquireSingleProcessLock(ct);
-
-            var job = Task.Run(async () =>
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
             {
-                try
+                for (int i = 0; i < 60; i++)
                 {
-                    for (int i = 0; i < 40; i++)
-                    {
-                        await delayer.SimulatedDelayBy(TimeSpan.FromSeconds(1), aquiredLock.InstallCancelled);
-                        await aquiredLock.ReportAlive(null, aquiredLock.InstallCancelled);
-                    }
-                    completedNormally = true;
-
+                    await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
+                    await aquiredLock.ReportAlive(null, aquiredLock.InstallCancelled);
+                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
+                        break;
                 }
-                catch (OperationCanceledException)
-                {
-                    cancelled = true;
-                }
-            });
 
-
-            await delayer.AdvanceBy(TimeSpan.FromSeconds(60));
-            await Task.Delay(100);
-            await job;
-            
-            Assert.False(cancelled);
-            Assert.True(completedNormally);
+                Assert.False(aquiredLock.InstallCancelled.IsCancellationRequested);
+            }
         }
 
         [Fact]
         public async Task A_lock_expires_automatically()
         {
-            var delayer = new TestDelayer();
-            var repo = new LockStore(new InMemoryStreamStore(), "msg");
-            var installer = new LockManager(repo, delayer.SimulatedDelayBy);
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                for (int i = 0; i < TimeAfterWhichDbShouldTimeout.TotalSeconds; i++)
+                {
+                    await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
+                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
+                        break;
+                }
+                Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+            }
 
-            var aquiredLock = await installer.AquireSingleProcessLock(ct);
+        }
 
-            await delayer.AdvanceBy(TimeSpan.FromSeconds(60));
-            Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+        [Fact]
+        public async Task Can_try_acquire_lock()
+        {
+            using (var result = await _sut.TryAquireLock(ct))
+            {
+                Assert.True(result.Aquired);
+                using (var secondAquire = await _sut.TryAquireLock(ct))
+                {
+                    Assert.False(secondAquire.Aquired);
+                }
+
+                // Disposing does not cause the lock in the DB to be released. If you don't explicitly
+                // release it, it will time out eventually, but this is better
+                await result.AquiredLock.Release(ct);
+            }
+
+            using (var thirdAquire = await _sut.TryAquireLock(ct))
+            {
+                Assert.True(thirdAquire.Aquired);
+            }
+
         }
 
 
         [Fact]
         public async Task Only_one_process_can_acquire_lock()
         {
-            var delayer = new TestDelayer();
-            var repo = new LockStore(new InMemoryStreamStore(), "msg");
-            var installer = new LockManager(repo, delayer.SimulatedDelayBy);
 
             // Acquire a lock
-            var acquiredLock = await installer.AquireSingleProcessLock(ct);
+            var acquiredLock = await _sut.WaitUntilLockIsAquired(ct);
 
             // Start a second async task that attempts to acquire the lock
             // (use a tcs to ensure the task is running)
@@ -125,69 +161,29 @@ namespace SqlStreamStore.Locking.Tests
 
             var secondLock = Task.Run(async () =>
             {
-                var acquired = installer.AquireSingleProcessLock(ct);
+                // This task tries to aquire lock.. it will keep waiting until aquired.
+                var acquired = _sut.WaitUntilLockIsAquired(ct);
                 secondTaskStarted.SetResult(true);
                 await acquired;
                 secondTaskCompleted = true;
             }, ct);
 
+            // Ensure the second task is really running
             await secondTaskStarted.Task;
-            await delayer.AdvanceBy(TimeSpan.FromSeconds(5));
 
+            // Advance the scheduler by 5 seconds.. this should not trigger
+            // The second task to complete
+            await _scheduler.AdvanceTimeBy(SafeTaskCheckingInterval);
             Assert.False(secondTaskCompleted);
 
+            // Then release the lock. This should allow the second task to aquire the lock
             await acquiredLock.Release(ct);
-            await delayer.AdvanceBy(TimeSpan.FromSeconds(5));
+            await _scheduler.AdvanceTimeBy(SafeTaskCheckingInterval);
 
-            await secondLock;
+            // Becuase the second task has aquired the lock, this should work normally 
+            // But with a guard against timing out tests. 
+            await Task.WhenAny(secondLock, Task.Delay(1000, ct));
             Assert.True(secondTaskCompleted);
-        }
-    }
-
-    public class TestDelayer
-    {
-        List<(TimeSpan fireAfter, TaskCompletionSource<bool>taskToFire)> _tasks = new List<(TimeSpan, TaskCompletionSource<bool>)>();
-
-        TimeSpan _passedTime = TimeSpan.Zero;
-
-        public Task SimulatedDelayBy(TimeSpan by, CancellationToken ct)
-        {
-            var tcs = new TaskCompletionSource<bool>();
-
-            _tasks.Add((_passedTime + by, tcs));
-
-            return tcs.Task;
-        }
-
-        public async Task AdvanceBy(TimeSpan timeSpan)
-        {
-            var incrementInMilliseconds = 10;
-            var ticks = timeSpan.TotalMilliseconds / incrementInMilliseconds;
-            for(int tick = 0; tick < ticks; tick++)
-            {
-                await Tick(TimeSpan.FromMilliseconds(incrementInMilliseconds));
-            }
-
-            var remainder = timeSpan.TotalMilliseconds % incrementInMilliseconds;
-            if (remainder > 0)
-            {
-                await Tick(TimeSpan.FromMilliseconds(remainder));
-            }
-        }
-
-        private async Task Tick(TimeSpan timeSpan)
-        {
-            _passedTime = _passedTime + timeSpan;
-            var toTrigger = _tasks.Where(x => x.fireAfter <= _passedTime).ToArray();
-            foreach (var item in toTrigger)
-            {
-                _tasks.Remove(item);
-                item.taskToFire.SetResult(true);
-
-                // We must do a little delay to give other code a chance to run. 
-                await Task.Yield();
-                await Task.Delay(1); 
-            }
         }
     }
 }

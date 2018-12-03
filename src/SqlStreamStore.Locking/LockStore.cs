@@ -3,8 +3,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using SqlStreamStore.Locking.Data;
 using SqlStreamStore.Streams;
-using StreamStoreStore.Json;
 
 namespace SqlStreamStore.Locking
 {
@@ -12,11 +12,23 @@ namespace SqlStreamStore.Locking
     {
         private readonly IStreamStore _streamStore;
         private readonly string _streamId;
+        private bool _maxLengthVerified;
+        private int _maxCount = 5;
 
         public LockStore(IStreamStore streamStore, string streamId)
         {
             _streamStore = streamStore;
             _streamId = streamId;
+        }
+
+        public int MaxCount
+        {
+            get => _maxCount;
+            set
+            {
+                _maxCount = value;
+                _maxLengthVerified = false;
+            }
         }
 
         public async Task<LockData> Get(CancellationToken ct)
@@ -34,10 +46,16 @@ namespace SqlStreamStore.Locking
 
         public async Task Save(LockData lockData, CancellationToken ct)
         {
-            var metaData = await _streamStore.GetStreamMetadata(_streamId, ct);
-            if (metaData.MaxCount != 5)
+            if (!_maxLengthVerified)
             {
-                await _streamStore.SetStreamMetadata(_streamId, maxAge: 5, cancellationToken: ct);
+                var metaData = await _streamStore.GetStreamMetadata(_streamId, ct);
+                if (metaData.MaxCount != _maxCount)
+                {
+                    // We store a maximum of 5 rows in the db
+                    await _streamStore.SetStreamMetadata(_streamId, maxAge: 5, cancellationToken: ct);
+                }
+
+                _maxLengthVerified = true;
             }
 
             var newData = JsonConvert.SerializeObject(lockData, Formatting.Indented);
