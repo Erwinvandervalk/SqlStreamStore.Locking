@@ -6,17 +6,6 @@ namespace SqlStreamStore.Locking.Data
 {
     public class LockData
     {
-        public static LockData Unlocked(int version = -1)
-        {
-            return new LockData(version, null, new List<HistoricData>());
-        }
-
-        public bool CanAquireLock => !History.Any() || (
-                                         History.Last().Action == LockAction.None
-                                         || History.Last().Action == LockAction.Released
-                                         || History.Last().Action == LockAction.TimedOut
-                                         || History.Last().Action == LockAction.Cancelled);
-
         public LockData(int version, string state, IEnumerable<HistoricData> history)
         {
             Version = version;
@@ -24,18 +13,28 @@ namespace SqlStreamStore.Locking.Data
             History = history?.ToArray() ?? Array.Empty<HistoricData>();
         }
 
+        public bool CanAquireLock => !History.Any() || History.Last().Action == LockAction.None ||
+                                     History.Last().Action == LockAction.Released ||
+                                     History.Last().Action == LockAction.TimedOut ||
+                                     History.Last().Action == LockAction.Cancelled;
+
         public int Version { get; }
 
         public string State { get; }
 
         public IReadOnlyList<HistoricData> History { get; }
 
+        public static LockData Unlocked(int version = -1)
+        {
+            return new LockData(version, null, new List<HistoricData>());
+        }
+
         public LockData Renewed(bool clearHistory = false)
         {
             return new LockData(
-                version: Version + 1, 
-                state: State, 
-                history: clearHistory
+                Version + 1,
+                State,
+                clearHistory
                     ? Enumerable.Empty<HistoricData>()
                     : History);
         }
@@ -43,10 +42,10 @@ namespace SqlStreamStore.Locking.Data
         public LockData Acquired(bool clearHistory = false)
         {
             return new LockData(
-                version: Version + 1, 
-                state: State, 
-                history: clearHistory 
-                    ? Enumerable.Empty<HistoricData>() 
+                Version + 1,
+                State,
+                clearHistory
+                    ? Enumerable.Empty<HistoricData>()
                     : History.Append(HistoricData.Build(Version, State, LockAction.Acquired)).ToList());
         }
 
@@ -59,9 +58,9 @@ namespace SqlStreamStore.Locking.Data
                 : History;
 
             return new LockData(
-                version: nextVersion, 
-                state: state, 
-                history: history.Append(HistoricData.Build(nextVersion, state, LockAction.Acquired)));
+                nextVersion,
+                state,
+                history.Append(HistoricData.Build(nextVersion, state, LockAction.Acquired)));
         }
 
         public LockData AfterAction(LockAction action, bool clearHistory = false)
@@ -73,9 +72,9 @@ namespace SqlStreamStore.Locking.Data
                 : History;
 
             return new LockData(
-                version: nextVersion,
-                state: State,
-                history: history.Append(HistoricData.Build(nextVersion, State, action)));
+                nextVersion,
+                State,
+                history.Append(HistoricData.Build(nextVersion, State, action)));
         }
 
         public LockData TakeOver(bool clearHistory = false)
@@ -83,9 +82,9 @@ namespace SqlStreamStore.Locking.Data
             var nextVersion = Version + 1;
 
             return new LockData(
-                version: nextVersion,
-                state: State,
-                history: clearHistory
+                nextVersion,
+                State,
+                clearHistory
                     ? Enumerable.Empty<HistoricData>()
                     : History.Append(HistoricData.Build(nextVersion, State, LockAction.TakenOver)));
         }

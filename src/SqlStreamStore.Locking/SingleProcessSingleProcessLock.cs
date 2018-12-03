@@ -7,26 +7,55 @@ namespace SqlStreamStore.Locking
 {
     public class SingleProcessSingleProcessLock : ISingleProcessLock
     {
-        private readonly ILockStore _lockStore;
-        internal readonly ScheduleRecurring ScheduleRecurring;
-        private readonly LockManager.Options _options;
-        private readonly CancellationTokenSource _installationCancelledCts;
         private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
-        private Task<Task> _tickTask;
+        private readonly CancellationTokenSource _installationCancelledCts;
+        private readonly ILockStore _lockStore;
+        private readonly LockManager.Options _options;
+        private readonly Func<Task> _stopPolling;
+        internal readonly ScheduleRecurring ScheduleRecurring;
 
         private TimeSpan _elapsed;
-        private readonly Func<Task> _stopPolling;
+        private Task<Task> _tickTask;
 
-        public SingleProcessSingleProcessLock(ILockStore lockStore, LockData lockData, ScheduleRecurring scheduleRecurring, LockManager.Options options, CancellationToken ct)
+        public SingleProcessSingleProcessLock(ILockStore lockStore, LockData lockData,
+            ScheduleRecurring scheduleRecurring, LockManager.Options options, CancellationToken ct)
         {
             _lockStore = lockStore;
             ScheduleRecurring = scheduleRecurring;
             _options = options;
             _installationCancelledCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _elapsed = TimeSpan.Zero;
-            
+
             CurrentLockData = lockData;
             _stopPolling = ScheduleRecurring(Tick, OnTick, ct);
+        }
+
+        public async Task ReportAlive(string state, CancellationToken ct, bool clearHistory = false)
+        {
+            ct.ThrowIfCancellationRequested();
+            var renewedLock = string.IsNullOrEmpty(state)
+                ? CurrentLockData.Renewed(clearHistory)
+                : CurrentLockData.WithProgress(state, clearHistory);
+
+            await StoreLockData(renewedLock, ct);
+            _elapsed = TimeSpan.Zero;
+        }
+
+        public async Task Release(CancellationToken ct, bool clearHistory = false)
+        {
+            await _stopPolling();
+            await _lockStore.Save(CurrentLockData.AfterAction(LockAction.Released, clearHistory), ct);
+            _installationCancelledCts.Cancel();
+        }
+
+        public CancellationToken InstallCancelled => _installationCancelledCts.Token;
+
+        public LockData CurrentLockData { get; private set; }
+
+        public void Dispose()
+        {
+            _stopPolling?.Invoke().GetAwaiter().GetResult();
+            _installationCancelledCts.Dispose();
         }
 
         private async Task OnTick(CancellationToken ct)
@@ -60,32 +89,6 @@ namespace SqlStreamStore.Locking
         {
             await _lockStore.Save(cancelledLock, ct);
             CurrentLockData = cancelledLock;
-        }
-
-        public async Task ReportAlive(string state, CancellationToken ct, bool clearHistory = false)
-        {
-            ct.ThrowIfCancellationRequested();
-            var renewedLock = string.IsNullOrEmpty(state)
-                ? CurrentLockData.Renewed(clearHistory)
-                : CurrentLockData.WithProgress(state, clearHistory);
-
-            await StoreLockData(renewedLock, ct);
-            _elapsed = TimeSpan.Zero;
-        }
-        public async Task Release(CancellationToken ct, bool clearHistory = false)
-        {
-            await _stopPolling();
-            await _lockStore.Save(CurrentLockData.AfterAction(LockAction.Released, clearHistory), ct);
-            _installationCancelledCts.Cancel();
-        }
-        public CancellationToken InstallCancelled => _installationCancelledCts.Token;
-
-        public LockData CurrentLockData { get; private set; }
-
-        public void Dispose()
-        {
-            _stopPolling?.Invoke().GetAwaiter().GetResult();
-            _installationCancelledCts.Dispose();
         }
     }
 }

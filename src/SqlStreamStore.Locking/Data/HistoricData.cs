@@ -4,12 +4,8 @@ namespace SqlStreamStore.Locking.Data
 {
     public class HistoricData
     {
-        public static HistoricData Build(int version, string state, LockAction action)
-        {
-            return new HistoricData(version, state, action, DateTime.UtcNow, Environment.MachineName, Environment.UserName);
-        }
-
-        public HistoricData(int version, string state, LockAction action, DateTime atUtc, string onMachine, string byUser)
+        public HistoricData(int version, string state, LockAction action, DateTime atUtc, string onMachine,
+            string byUser)
         {
             Version = version;
             State = state;
@@ -27,8 +23,10 @@ namespace SqlStreamStore.Locking.Data
         public string OnMachine { get; }
         public string ByUser { get; }
 
-
-
+        public static HistoricData Build(int version, string state, LockAction action)
+        {
+            return new HistoricData(version, state, action, DateTime.UtcNow, Environment.MachineName,
+                Environment.UserName);
+        }
     }
-
 }

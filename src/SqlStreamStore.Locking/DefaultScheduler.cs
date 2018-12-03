@@ -6,9 +6,10 @@ namespace SqlStreamStore.Locking
 {
     internal static class DefaultScheduler
     {
-        public static Func<Task> ScheduleRecurring(TimeSpan period, Func<CancellationToken, Task> tasktoschedule, CancellationToken ct)
+        public static Func<Task> ScheduleRecurring(TimeSpan period, Func<CancellationToken, Task> tasktoschedule,
+            CancellationToken ct)
         {
-            CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             var task = Task.Run(async () =>
             {

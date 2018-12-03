@@ -3,13 +3,17 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
-using Xunit.Sdk;
 
 namespace SqlStreamStore.Locking.Tests
 {
-
     public class LockManagerTests
     {
+        public LockManagerTests()
+        {
+            _lockStore = new LockStore(_inMemoryStreamStore, "msg");
+            _sut = LockManager.BuildLockManager(_lockStore, UsedOptions, _scheduler.ScheduleRecurring);
+        }
+
         private readonly CancellationToken ct = CancellationToken.None;
         private readonly TestScheduler _scheduler = new TestScheduler();
         private readonly LockStore _lockStore;
@@ -22,10 +26,20 @@ namespace SqlStreamStore.Locking.Tests
         public TimeSpan TimeAfterWhichDbShouldTimeout => UsedOptions.DbTimeout + TimeSpan.FromSeconds(5);
         public TimeSpan SafeTaskCheckingInterval => UsedOptions.RefreshInterval + TimeSpan.FromSeconds(1);
 
-        public LockManagerTests()
+        [Fact]
+        public async Task A_lock_expires_automatically()
         {
-            _lockStore = new LockStore(_inMemoryStreamStore, "msg");
-            _sut = LockManager.BuildLockManager(_lockStore, UsedOptions, _scheduler.ScheduleRecurring);
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                for (var i = 0; i < TimeAfterWhichDbShouldTimeout.TotalSeconds; i++)
+                {
+                    await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
+                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
+                        break;
+                }
+
+                Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+            }
         }
 
         [Fact]
@@ -35,6 +49,23 @@ namespace SqlStreamStore.Locking.Tests
             {
                 await aquiredLock.Release(ct);
                 Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+            }
+        }
+
+        [Fact]
+        public async Task Can_keep_task_alive()
+        {
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                for (var i = 0; i < 60; i++)
+                {
+                    await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
+                    await aquiredLock.ReportAlive(null, aquiredLock.InstallCancelled);
+                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
+                        break;
+                }
+
+                Assert.False(aquiredLock.InstallCancelled.IsCancellationRequested);
             }
         }
 
@@ -56,71 +87,14 @@ namespace SqlStreamStore.Locking.Tests
 
             var data = await _sut.GetCurrentState(CancellationToken.None);
             Assert.Equal("state2", data.State);
-            Assert.Equal(new []{null, "state1", "state1", "state1", "state2", "state2" }, data.History.Select(x => x.State).ToArray());
-            Assert.Equal(new []{LockAction.Acquired, LockAction.Acquired, LockAction.Released, LockAction.Acquired, LockAction.Acquired, LockAction.Released }, data.History.Select(x => x.Action).ToArray());
-        }
-
-        [Fact]
-        public async Task Will_cancel_task_when_needed()
-        {
-            bool cancelled = false;
-            bool ranToCompletion = false;
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
-            {
-                var job = Task.Run(async () =>
+            Assert.Equal(new[] {null, "state1", "state1", "state1", "state2", "state2"},
+                data.History.Select(x => x.State).ToArray());
+            Assert.Equal(
+                new[]
                 {
-                    try
-                    {
-                        // it should not really wait for 1000 seconds. but 1000 seconds should be enough for the
-                        // test to be killed. If not, then the 'ran to completion' will kill it. 
-                        await Task.Delay(TimeSpan.FromSeconds(1000), aquiredLock.InstallCancelled);
-                        ranToCompletion = true;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        cancelled = true;
-                    }
-                });
-
-                await _scheduler.AdvanceTimeBy(TimeAfterWhichTaskShouldTimeout);
-
-                await job;
-                Assert.True(cancelled);
-                Assert.False(ranToCompletion);
-            }
-        }
-
-        [Fact]
-        public async Task Can_keep_task_alive()
-        {
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
-            {
-                for (int i = 0; i < 60; i++)
-                {
-                    await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
-                    await aquiredLock.ReportAlive(null, aquiredLock.InstallCancelled);
-                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
-                        break;
-                }
-
-                Assert.False(aquiredLock.InstallCancelled.IsCancellationRequested);
-            }
-        }
-
-        [Fact]
-        public async Task A_lock_expires_automatically()
-        {
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
-            {
-                for (int i = 0; i < TimeAfterWhichDbShouldTimeout.TotalSeconds; i++)
-                {
-                    await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
-                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
-                        break;
-                }
-                Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
-            }
-
+                    LockAction.Acquired, LockAction.Acquired, LockAction.Released, LockAction.Acquired,
+                    LockAction.Acquired, LockAction.Released
+                }, data.History.Select(x => x.Action).ToArray());
         }
 
         [Fact]
@@ -143,21 +117,19 @@ namespace SqlStreamStore.Locking.Tests
             {
                 Assert.True(thirdAquire.Aquired);
             }
-
         }
 
 
         [Fact]
         public async Task Only_one_process_can_acquire_lock()
         {
-
             // Acquire a lock
             var acquiredLock = await _sut.WaitUntilLockIsAquired(ct);
 
             // Start a second async task that attempts to acquire the lock
             // (use a tcs to ensure the task is running)
             var secondTaskStarted = new TaskCompletionSource<bool>();
-            bool secondTaskCompleted = false;
+            var secondTaskCompleted = false;
 
             var secondLock = Task.Run(async () =>
             {
@@ -184,6 +156,36 @@ namespace SqlStreamStore.Locking.Tests
             // But with a guard against timing out tests. 
             await Task.WhenAny(secondLock, Task.Delay(1000, ct));
             Assert.True(secondTaskCompleted);
+        }
+
+        [Fact]
+        public async Task Will_cancel_task_when_needed()
+        {
+            var cancelled = false;
+            var ranToCompletion = false;
+            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            {
+                var job = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // it should not really wait for 1000 seconds. but 1000 seconds should be enough for the
+                        // test to be killed. If not, then the 'ran to completion' will kill it. 
+                        await Task.Delay(TimeSpan.FromSeconds(1000), aquiredLock.InstallCancelled);
+                        ranToCompletion = true;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        cancelled = true;
+                    }
+                });
+
+                await _scheduler.AdvanceTimeBy(TimeAfterWhichTaskShouldTimeout);
+
+                await job;
+                Assert.True(cancelled);
+                Assert.False(ranToCompletion);
+            }
         }
     }
 }

@@ -9,6 +9,7 @@ namespace SqlStreamStore.Locking.Tests
     {
         private readonly List<ScheduledTask> _scheduledTasks = new List<ScheduledTask>();
         private readonly object _syncRoot = new object();
+
         public Func<Task> ScheduleRecurring(TimeSpan period, Func<CancellationToken, Task> tasktoschedule,
             CancellationToken ct)
         {
@@ -24,6 +25,7 @@ namespace SqlStreamStore.Locking.Tests
                 {
                     _scheduledTasks.Remove(scheduledTask);
                 }
+
                 return Task.CompletedTask;
             };
         }
@@ -37,36 +39,29 @@ namespace SqlStreamStore.Locking.Tests
                 scheduledTasks = _scheduledTasks.ToArray();
             }
 
-            foreach (var task in scheduledTasks)
-            {
-                task.ElapsedSinceLastTrigger += toAdvance;
-            }
+            foreach (var task in scheduledTasks) task.ElapsedSinceLastTrigger += toAdvance;
 
 
             while (true)
             {
-                bool ticked = false;
+                var ticked = false;
 
                 foreach (var task in scheduledTasks)
-                {
                     if (task.ElapsedSinceLastTrigger >= task.Period)
                     {
                         ticked = true;
                         task.ElapsedSinceLastTrigger -= task.Period;
-                        await (task.ToSchedule(CancellationToken.None));
+                        await task.ToSchedule(CancellationToken.None);
                     }
-                }
 
                 if (!ticked) break;
             }
-
-
         }
 
         private class ScheduledTask
         {
-            public readonly Func<CancellationToken, Task> ToSchedule;
             public readonly TimeSpan Period;
+            public readonly Func<CancellationToken, Task> ToSchedule;
             public TimeSpan ElapsedSinceLastTrigger;
 
             public ScheduledTask(Func<CancellationToken, Task> schedule, TimeSpan period)
