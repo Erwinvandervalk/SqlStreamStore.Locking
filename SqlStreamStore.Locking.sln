@@ -7,7 +7,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6E28FB2C-695
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlStreamStore.Locking", "src\SqlStreamStore.Locking\SqlStreamStore.Locking.csproj", "{E1BAC79C-9112-43B7-8E1F-333CB67D0357}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlStreamStore.Locking.Tests", "src\SqlStreamStore.Locking.tests\SqlStreamStore.Locking.Tests.csproj", "{8C6B86DF-652F-4D60-9BB0-CD37AA9747A7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlStreamStore.Locking.Tests", "src\SqlStreamStore.Locking.Tests\SqlStreamStore.Locking.Tests.csproj", "{8C6B86DF-652F-4D60-9BB0-CD37AA9747A7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
