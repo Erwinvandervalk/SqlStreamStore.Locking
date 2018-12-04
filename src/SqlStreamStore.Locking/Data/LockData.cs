@@ -13,7 +13,7 @@ namespace SqlStreamStore.Locking.Data
             History = history?.ToArray() ?? Array.Empty<HistoricData>();
         }
 
-        public bool CanAquireLock => !History.Any() || History.Last().Action == LockAction.None ||
+        public bool CanAcquireLock => !History.Any() || History.Last().Action == LockAction.None ||
                                      History.Last().Action == LockAction.Released ||
                                      History.Last().Action == LockAction.TimedOut ||
                                      History.Last().Action == LockAction.Cancelled;

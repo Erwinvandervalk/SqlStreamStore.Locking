@@ -5,7 +5,7 @@ using SqlStreamStore.Locking.Data;
 
 namespace SqlStreamStore.Locking
 {
-    public class SingleProcessSingleProcessLock : ISingleProcessLock
+    public class SingleProcessLock : ISingleProcessLock
     {
         private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
         private readonly CancellationTokenSource _installationCancelledCts;
@@ -17,7 +17,7 @@ namespace SqlStreamStore.Locking
         private TimeSpan _elapsed;
         private Task<Task> _tickTask;
 
-        public SingleProcessSingleProcessLock(ILockStore lockStore, LockData lockData,
+        public SingleProcessLock(ILockStore lockStore, LockData lockData,
             ScheduleRecurring scheduleRecurring, LockManager.Options options, CancellationToken ct)
         {
             _lockStore = lockStore;

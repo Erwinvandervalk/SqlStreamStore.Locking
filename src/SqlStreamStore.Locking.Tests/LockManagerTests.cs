@@ -29,60 +29,60 @@ namespace SqlStreamStore.Locking.Tests
         [Fact]
         public async Task A_lock_expires_automatically()
         {
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            using (var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct))
             {
                 for (var i = 0; i < TimeAfterWhichDbShouldTimeout.TotalSeconds; i++)
                 {
                     await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
-                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
+                    if (acquiredLock.InstallCancelled.IsCancellationRequested)
                         break;
                 }
 
-                Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+                Assert.True(acquiredLock.InstallCancelled.IsCancellationRequested);
             }
         }
 
         [Fact]
-        public async Task Can_aquire_lock_and_release_it()
+        public async Task Can_acquire_lock_and_release_it()
         {
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            using (var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct))
             {
-                await aquiredLock.Release(ct);
-                Assert.True(aquiredLock.InstallCancelled.IsCancellationRequested);
+                await acquiredLock.Release(ct);
+                Assert.True(acquiredLock.InstallCancelled.IsCancellationRequested);
             }
         }
 
         [Fact]
         public async Task Can_keep_task_alive()
         {
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            using (var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct))
             {
                 for (var i = 0; i < 60; i++)
                 {
                     await _scheduler.AdvanceTimeBy(TimeSpan.FromSeconds(1));
-                    await aquiredLock.ReportAlive(null, aquiredLock.InstallCancelled);
-                    if (aquiredLock.InstallCancelled.IsCancellationRequested)
+                    await acquiredLock.ReportAlive(null, acquiredLock.InstallCancelled);
+                    if (acquiredLock.InstallCancelled.IsCancellationRequested)
                         break;
                 }
 
-                Assert.False(aquiredLock.InstallCancelled.IsCancellationRequested);
+                Assert.False(acquiredLock.InstallCancelled.IsCancellationRequested);
             }
         }
 
         [Fact]
         public async Task Can_take_over_lock_after_released()
         {
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            using (var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct))
             {
-                await aquiredLock.ReportAlive("state1", CancellationToken.None);
-                await aquiredLock.Release(ct);
+                await acquiredLock.ReportAlive("state1", CancellationToken.None);
+                await acquiredLock.Release(ct);
             }
 
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            using (var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct))
             {
-                Assert.Equal("state1", aquiredLock.CurrentLockData.State);
-                await aquiredLock.ReportAlive("state2", CancellationToken.None);
-                await aquiredLock.Release(ct);
+                Assert.Equal("state1", acquiredLock.CurrentLockData.State);
+                await acquiredLock.ReportAlive("state2", CancellationToken.None);
+                await acquiredLock.Release(ct);
             }
 
             var data = await _sut.GetCurrentState(CancellationToken.None);
@@ -100,22 +100,22 @@ namespace SqlStreamStore.Locking.Tests
         [Fact]
         public async Task Can_try_acquire_lock()
         {
-            using (var result = await _sut.TryAquireLock(ct))
+            using (var result = await _sut.TryAcquireLock(ct))
             {
-                Assert.True(result.Aquired);
-                using (var secondAquire = await _sut.TryAquireLock(ct))
+                Assert.True(result.Acquired);
+                using (var secondAcquire = await _sut.TryAcquireLock(ct))
                 {
-                    Assert.False(secondAquire.Aquired);
+                    Assert.False(secondAcquire.Acquired);
                 }
 
                 // Disposing does not cause the lock in the DB to be released. If you don't explicitly
                 // release it, it will time out eventually, but this is better
-                await result.AquiredLock.Release(ct);
+                await result.AcquiredLock.Release(ct);
             }
 
-            using (var thirdAquire = await _sut.TryAquireLock(ct))
+            using (var thirdAcquire = await _sut.TryAcquireLock(ct))
             {
-                Assert.True(thirdAquire.Aquired);
+                Assert.True(thirdAcquire.Acquired);
             }
         }
 
@@ -124,7 +124,7 @@ namespace SqlStreamStore.Locking.Tests
         public async Task Only_one_process_can_acquire_lock()
         {
             // Acquire a lock
-            var acquiredLock = await _sut.WaitUntilLockIsAquired(ct);
+            var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct);
 
             // Start a second async task that attempts to acquire the lock
             // (use a tcs to ensure the task is running)
@@ -133,8 +133,8 @@ namespace SqlStreamStore.Locking.Tests
 
             var secondLock = Task.Run(async () =>
             {
-                // This task tries to aquire lock.. it will keep waiting until aquired.
-                var acquired = _sut.WaitUntilLockIsAquired(ct);
+                // This task tries to acquire lock.. it will keep waiting until acquired.
+                var acquired = _sut.WaitUntilLockIsAcquired(ct);
                 secondTaskStarted.SetResult(true);
                 await acquired;
                 secondTaskCompleted = true;
@@ -148,11 +148,11 @@ namespace SqlStreamStore.Locking.Tests
             await _scheduler.AdvanceTimeBy(SafeTaskCheckingInterval);
             Assert.False(secondTaskCompleted);
 
-            // Then release the lock. This should allow the second task to aquire the lock
+            // Then release the lock. This should allow the second task to acquire the lock
             await acquiredLock.Release(ct);
             await _scheduler.AdvanceTimeBy(SafeTaskCheckingInterval);
 
-            // Becuase the second task has aquired the lock, this should work normally 
+            // Because the second task has acquired the lock, this should work normally 
             // But with a guard against timing out tests. 
             await Task.WhenAny(secondLock, Task.Delay(1000, ct));
             Assert.True(secondTaskCompleted);
@@ -163,7 +163,7 @@ namespace SqlStreamStore.Locking.Tests
         {
             var cancelled = false;
             var ranToCompletion = false;
-            using (var aquiredLock = await _sut.WaitUntilLockIsAquired(ct))
+            using (var acquiredLock = await _sut.WaitUntilLockIsAcquired(ct))
             {
                 var job = Task.Run(async () =>
                 {
@@ -171,7 +171,7 @@ namespace SqlStreamStore.Locking.Tests
                     {
                         // it should not really wait for 1000 seconds. but 1000 seconds should be enough for the
                         // test to be killed. If not, then the 'ran to completion' will kill it. 
-                        await Task.Delay(TimeSpan.FromSeconds(1000), aquiredLock.InstallCancelled);
+                        await Task.Delay(TimeSpan.FromSeconds(1000), acquiredLock.InstallCancelled);
                         ranToCompletion = true;
                     }
                     catch (OperationCanceledException)

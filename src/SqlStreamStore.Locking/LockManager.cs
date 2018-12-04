@@ -35,29 +35,29 @@ namespace SqlStreamStore.Locking
             return new LockManager(lockStore, options, scheduleRecurring ?? DefaultScheduler.ScheduleRecurring);
         }
 
-        public async Task<TryAquireLockResult> TryAquireLock(CancellationToken ct, bool clearHistory = false)
+        public async Task<TryAcquireLockResult> TryAcquireLock(CancellationToken ct, bool clearHistory = false)
         {
             // Query for existing lock
             var lockData = await _lockStore.Get(ct);
 
-            if (lockData.CanAquireLock)
+            if (lockData.CanAcquireLock)
             {
-                var acquiredLock = lockData.Acquired(_options.ClearHistoryOnAquire || clearHistory);
+                var acquiredLock = lockData.Acquired(_options.ClearHistoryOnAcquire || clearHistory);
                 await _lockStore.Save(acquiredLock, ct);
-                return new TryAquireLockResult(true, BuildLock(acquiredLock, ct));
+                return new TryAcquireLockResult(true, BuildLock(acquiredLock, ct));
             }
 
-            return new TryAquireLockResult(false, null);
+            return new TryAcquireLockResult(false, null);
         }
 
-        public async Task<ISingleProcessLock> WaitUntilLockIsAquired(CancellationToken ct, bool clearHistory = false)
+        public async Task<ISingleProcessLock> WaitUntilLockIsAcquired(CancellationToken ct, bool clearHistory = false)
         {
             // Query for existing lock
             var lockData = await _lockStore.Get(ct);
 
-            if (lockData.CanAquireLock)
+            if (lockData.CanAcquireLock)
             {
-                var acquiredLock = lockData.Acquired(_options.ClearHistoryOnAquire || clearHistory);
+                var acquiredLock = lockData.Acquired(_options.ClearHistoryOnAcquire || clearHistory);
                 await _lockStore.Save(acquiredLock, ct);
                 return BuildLock(acquiredLock, ct);
             }
@@ -70,7 +70,7 @@ namespace SqlStreamStore.Locking
                 elapsed += TimeSpan.FromSeconds(1);
                 lockData = await _lockStore.Get(innerCt);
 
-                if (lockData.CanAquireLock || lockData.Version == currentVersion && elapsed > _options.DbTimeout)
+                if (lockData.CanAcquireLock || lockData.Version == currentVersion && elapsed > _options.DbTimeout)
                 {
                     // No progress, so we can safely take over
                     var acquiredLock = lockData.TakeOver(clearHistory);
@@ -88,9 +88,9 @@ namespace SqlStreamStore.Locking
             return result;
         }
 
-        private SingleProcessSingleProcessLock BuildLock(LockData acquiredLock, CancellationToken ct)
+        private SingleProcessLock BuildLock(LockData acquiredLock, CancellationToken ct)
         {
-            return new SingleProcessSingleProcessLock(_lockStore, acquiredLock, _scheduleRecurring, _options, ct);
+            return new SingleProcessLock(_lockStore, acquiredLock, _scheduleRecurring, _options, ct);
         }
 
         public async Task<LockData> GetCurrentState(CancellationToken ct)
@@ -117,12 +117,12 @@ namespace SqlStreamStore.Locking
             public readonly TimeSpan TaskTimeout;
 
             /// <summary>
-            ///     Should the history be cleared on aquiring (typically done if you don't need to keep the history)
+            ///     Should the history be cleared on acquiring (typically done if you don't need to keep the history)
             /// </summary>
-            public bool ClearHistoryOnAquire;
+            public bool ClearHistoryOnAcquire;
 
             public Options(TimeSpan? dbTimeout = null, TimeSpan? taskTimeout = null, TimeSpan? refreshInterval = null,
-                bool clearHistoryOnAquire = false)
+                bool clearHistoryOnAcquire = false)
             {
                 RefreshInterval = refreshInterval ?? TimeSpan.FromSeconds(5);
                 TaskTimeout = taskTimeout ?? TimeSpan.FromSeconds(90);
@@ -135,7 +135,7 @@ namespace SqlStreamStore.Locking
                     throw new ArgumentOutOfRangeException(
                         $"The task timeout {RefreshInterval} cannot be smaller than the refresh interval {RefreshInterval}. ");
 
-                ClearHistoryOnAquire = clearHistoryOnAquire;
+                ClearHistoryOnAcquire = clearHistoryOnAcquire;
             }
 
             public static Options Default => new Options();
